@@ -1,51 +1,9 @@
 import streamlit as st
 import pandas as pd
+import database_connector as db_connector # Import du nouveau fichier de connecteur
 import json
 
-# Clé de l'état de session qui simulera le stockage distant
-DATA_KEY = "persisted_data"
-
-# --- Fonctions de Persistance (SIMULATION D'UNE BASE DE DONNÉES CLOUD) ---
-
-# NOTE: Dans un environnement Streamlit réel, cette fonction serait remplacée par
-# une lecture/écriture vers Google Sheets ou Firestore. Ici, nous utilisons
-# l'état du Canvas comme stockage persistant simulé.
-
-def load_initial_data(df_csv):
-    """
-    Initialise l'état de la base de données simulée.
-    Si DATA_KEY n'existe pas, il est créé à partir du CSV initial.
-    """
-    if DATA_KEY not in st.session_state:
-        # Convertit le DataFrame initial en un format JSON pour le stockage
-        st.session_state[DATA_KEY] = df_csv.to_json(orient='split', index=False)
-        st.info("Données initialisées à partir de 'data.csv'. Les modifications seront sauvegardées dans la mémoire de l'application.")
-        
-
-def load_persisted_data():
-    """Charge les données depuis le stockage simulé (JSON)."""
-    if DATA_KEY in st.session_state:
-        # Reconstruit le DataFrame à partir de la chaîne JSON stockée
-        data_json = st.session_state[DATA_KEY]
-        df = pd.read_json(data_json, orient='split')
-        
-        # S'assurer que les booléens sont conservés
-        for col in df.columns:
-            if 'Présence' in col:
-                df[col] = df[col].astype(bool)
-        
-        return df
-    return pd.DataFrame()
-
-
-def save_persisted_data(df):
-    """Sauvegarde les données modifiées dans le stockage simulé (JSON)."""
-    # Convertit le DataFrame mis à jour en JSON et le stocke
-    st.session_state[DATA_KEY] = df.to_json(orient='split', index=False)
-    st.success("💾 Modifications sauvegardées dans la mémoire de l'application.")
-
-
-# --- Fonction de Chargement et de Nettoyage (Utilise le stockage simulé) ---
+# --- Fonction de Chargement et de Nettoyage (Utilise le CSV local pour l'initialisation) ---
 
 @st.cache_data
 def load_and_clean_data_from_csv():
@@ -117,24 +75,39 @@ def generate_notes_report(df):
 
 # --- Configuration de l'Application Streamlit ---
 st.set_page_config(
-    page_title="Gestion des Notes et Absences",
+    page_title="Absences/Tests GMAT1-MRN (K. SAI-2025)", # <--- TITRE DE L'ONGLET DU NAVIGATEUR MIS À JOUR
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("👨‍🏫 Gestionnaire de Notes et Absences")
-st.caption("Application Web pour le suivi des étudiants. Les données sont persistantes dans cette session.")
+st.title("📊 Absences/Tests GMAT1-MRN (K. SAI-2025)") # <--- TITRE PRINCIPAL SUR LA PAGE MIS À JOUR
+st.caption("Application Web pour le suivi des étudiants. Architecture prête pour le Cloud.")
 st.divider()
 
-# 1. Tenter de charger les données initiales du CSV (ne se fait qu'une fois)
-initial_df = load_and_clean_data_from_csv()
+# --- LOGIQUE DE CHARGEMENT PRINCIPALE (PRÊTE POUR LE CLOUD) ---
 
-# 2. Initialiser le stockage JSON si nécessaire et charger les données modifiées
-if not initial_df.empty:
-    load_initial_data(initial_df)
-    # df_active est le DataFrame que l'utilisateur édite
-    df_active = load_persisted_data()
-    st.session_state.data_df = df_active
+if 'data_df' not in st.session_state:
+    db_connector.init_db()
+    
+    # 1. Tenter de charger les données depuis la base de données simulée (Cloud)
+    df_from_cloud = db_connector.fetch_data()
+
+    if df_from_cloud.empty:
+        # 2. Si la base de données Cloud est vide (première exécution), charger depuis le CSV local
+        initial_df = load_and_clean_data_from_csv()
+        
+        if not initial_df.empty:
+            # 3. Écrire les données initiales du CSV dans la base de données Cloud simulée
+            db_connector.write_data(initial_df)
+            st.session_state.data_df = initial_df.copy()
+            st.info("Initialisation réussie : Données chargées du CSV et écrites dans la base de données simulée.")
+        else:
+            st.session_state.data_df = pd.DataFrame()
+    else:
+        # 4. Succès : Les données ont été chargées depuis la base de données Cloud simulée
+        st.session_state.data_df = df_from_cloud
+        st.success("Données chargées depuis la base de données simulée. Les modifications précédentes sont conservées.")
+
 
 # Afficher la table complète et la rendre modifiable
 if 'data_df' in st.session_state and not st.session_state.data_df.empty:
@@ -194,8 +167,8 @@ if 'data_df' in st.session_state and not st.session_state.data_df.empty:
 
     with col1:
         if st.button("💾 Sauvegarder les Modifications", use_container_width=True):
-            # 4. Bouton pour déclencher la sauvegarde des données modifiées
-            save_persisted_data(st.session_state.data_df)
+            # 4. Bouton pour déclencher la sauvegarde des données modifiées dans la base de données simulée
+            db_connector.write_data(st.session_state.data_df)
 
     with col2:
         if st.button("📊 Bilan des Absences", use_container_width=True):
@@ -213,4 +186,4 @@ if 'data_df' in st.session_state and not st.session_state.data_df.empty:
 
 
 else:
-    st.info("Le DataFrame est vide. Veuillez vous assurer que 'data.csv' existe et n'est pas corrompu.")
+    st.info("Le DataFrame est vide. Veuillez vous assurer que 'data.csv' existe et n'est pas corrompu pour l'initialisation.")
